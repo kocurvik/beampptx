@@ -201,8 +201,13 @@ _MOVIE_RE = re.compile(
 def _parse_tex_videos(tex_path: Path) -> list[dict]:
     """
     Find every ``\\includemovie[opts]{w}{h}{path}`` in *tex_path* and return,
-    in source order, one dict per call with keys ``video_path`` (str),
-    ``poster_path`` (str | None), and ``autoplay`` (bool).
+    in source order, one dict per call with keys:
+
+      * ``video_path``  (str)
+      * ``poster_path`` (str | None)
+      * ``autoplay``    (bool)   — starts playback when the slide is shown
+      * ``loop``        (bool)   — translated from movie15's ``repeat``
+      * ``volume``      (float | None) — movie15 uses 0.0–1.0
     """
     try:
         text = tex_path.read_text(encoding="utf-8")
@@ -213,11 +218,20 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
     for m in _MOVIE_RE.finditer(text):
         opts = m.group("opts") or ""
         poster_match = re.search(r'poster\s*=\s*([^,\s\]]+)', opts)
+        volume_match = re.search(r'\bvolume\s*=\s*([0-9.]+)', opts)
+        # ``repeat`` may appear as a bare flag or as ``repeat=N`` — any value
+        # ≥ 1 maps to "loop indefinitely" in PowerPoint, which only supports
+        # the binary loop/no-loop distinction.
+        repeat_match = re.search(r'\brepeat\b(?:\s*=\s*\d+)?', opts)
+        palindrome_match = re.search(r'\bpalindrome\b', opts)
         videos.append({
             "video_path": m.group("path").strip(),
             "poster_path": (poster_match.group(1).strip()
                             if poster_match else None),
             "autoplay": bool(re.search(r'\bautoplay\b', opts)),
+            "loop": bool(repeat_match or palindrome_match),
+            "volume": (float(volume_match.group(1))
+                       if volume_match else None),
         })
     return videos
 
@@ -309,12 +323,139 @@ def _add_video_to_slide(slide, info: dict) -> None:
     if poster_path and poster_path.exists():
         kwargs["poster_frame_image"] = str(poster_path)
 
-    slide.shapes.add_movie(
+    shape = slide.shapes.add_movie(
         str(video_path), left, top, width, height, **kwargs,
     )
+
+    autoplay = info.get("autoplay", False)
+    loop = info.get("loop", False)
+    volume = info.get("volume")  # 0.0..1.0 or None
+    if autoplay or loop or volume is not None:
+        _apply_video_playback(slide, shape,
+                              autoplay=autoplay, loop=loop, volume=volume)
+
+    extras = []
+    if autoplay: extras.append("autoplay")
+    if loop:     extras.append("loop")
+    if volume is not None: extras.append(f"vol={volume:.2f}")
+    extras_str = f" [{', '.join(extras)}]" if extras else ""
     print(f"  → embedded video {video_path.name} on slide "
           f"(at {rect.x0:.0f},{rect.y0:.0f} pt, "
-          f"{rect.width:.0f}×{rect.height:.0f} pt)")
+          f"{rect.width:.0f}×{rect.height:.0f} pt){extras_str}")
+
+
+# Full <p:timing> tree that triggers ``playFrom(0.0)`` on the named shape as
+# soon as the slide is shown.  The ``presetClass="mediacall"`` afterEffect is
+# the structure PowerPoint itself emits for autoplay videos.  ``{shape_id}``,
+# ``{vol}`` and ``{repeat_attr}`` are substituted by Python's ``str.format``.
+_AUTOPLAY_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:tnLst>
+    <p:par>
+      <p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">
+        <p:childTnLst>
+          <p:seq concurrent="1" nextAc="seek">
+            <p:cTn id="2" dur="indefinite" nodeType="mainSeq">
+              <p:childTnLst>
+                <p:par>
+                  <p:cTn id="3" fill="hold">
+                    <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+                    <p:childTnLst>
+                      <p:par>
+                        <p:cTn id="4" fill="hold">
+                          <p:stCondLst><p:cond delay="0"/></p:stCondLst>
+                          <p:childTnLst>
+                            <p:par>
+                              <p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect">
+                                <p:stCondLst><p:cond delay="0"/></p:stCondLst>
+                                <p:childTnLst>
+                                  <p:cmd type="call" cmd="playFrom(0.0)">
+                                    <p:cBhvr>
+                                      <p:cTn id="6" dur="indefinite"{repeat_attr}/>
+                                      <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
+                                    </p:cBhvr>
+                                  </p:cmd>
+                                </p:childTnLst>
+                              </p:cTn>
+                            </p:par>
+                          </p:childTnLst>
+                        </p:cTn>
+                      </p:par>
+                    </p:childTnLst>
+                  </p:cTn>
+                </p:par>
+              </p:childTnLst>
+            </p:cTn>
+            <p:prevCondLst>
+              <p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond>
+            </p:prevCondLst>
+            <p:nextCondLst>
+              <p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond>
+            </p:nextCondLst>
+          </p:seq>
+          <p:video>
+            <p:cMediaNode vol="{vol}">
+              <p:cTn id="7" fill="hold" display="0">
+                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+              </p:cTn>
+              <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
+            </p:cMediaNode>
+          </p:video>
+        </p:childTnLst>
+      </p:cTn>
+    </p:par>
+  </p:tnLst>
+</p:timing>"""
+
+
+# Click-to-play timing — same shape as what python-pptx emits by default but
+# with the ``vol`` attribute and an optional ``repeatCount`` so we can honour
+# ``volume=`` / ``repeat`` even when the user did not request autoplay.
+_CLICK_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:tnLst>
+    <p:par>
+      <p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">
+        <p:childTnLst>
+          <p:video>
+            <p:cMediaNode vol="{vol}">
+              <p:cTn id="2" fill="hold" display="0"{repeat_attr}>
+                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+              </p:cTn>
+              <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
+            </p:cMediaNode>
+          </p:video>
+        </p:childTnLst>
+      </p:cTn>
+    </p:par>
+  </p:tnLst>
+</p:timing>"""
+
+
+def _apply_video_playback(slide, shape, *,
+                          autoplay: bool, loop: bool,
+                          volume: float | None) -> None:
+    """
+    Replace the slide's <p:timing> with a tree that wires *shape* for
+    autoplay, looping, and/or custom volume.  python-pptx's ``add_movie``
+    always leaves a click-to-play <p:timing> behind, so we just swap it.
+    """
+    shape_id = shape.shape_id
+    # OOXML ``vol`` is on the 0..100000 (= 100 %) scale; the PowerPoint
+    # default for unspecified volume is 80 %.
+    vol = int((volume if volume is not None else 0.8) * 100000)
+    vol = max(0, min(100000, vol))
+    repeat_attr = ' repeatCount="indefinite"' if loop else ''
+
+    template = _AUTOPLAY_TIMING_XML if autoplay else _CLICK_TIMING_XML
+    timing_xml = template.format(shape_id=shape_id, vol=vol,
+                                 repeat_attr=repeat_attr)
+    new_timing = etree.fromstring(timing_xml)
+
+    P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+    sld = slide.element
+    existing = sld.find(f"{P}timing")
+    if existing is not None:
+        sld.remove(existing)
+    sld.append(new_timing)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

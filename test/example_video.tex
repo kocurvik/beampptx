@@ -1,8 +1,9 @@
 \documentclass{beamer}
 \beamertemplatenavigationsymbolsempty
 
-% movie15 is an older package for video inclusion.
-% It is generally superseded by media9, but still used in some workflows.
+% movie15 is an older package for video inclusion in Beamer.
+% This file exercises the most common options exposed by \includemovie
+% to verify that each one is translated correctly into PowerPoint.
 \usepackage{movie15}
 
 \title{Beamer with Video (movie15)}
@@ -15,19 +16,49 @@
     \titlepage
 \end{frame}
 
-\begin{frame}{Video Inclusion (movie15)}
-    This slide is intended to test video inclusion using the \texttt{movie15} package.
-    
+\begin{frame}{Default --- Click to Play}
+    No special options: the video sits behind its poster image and PowerPoint
+    starts playback when the slide is clicked.
     \begin{center}
         \includemovie[
             poster=image.png,
-            text={Click to play},
+            text={Click to play}
+        ]{0.7\linewidth}{0.4\linewidth}{video.mp4}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Autoplay}
+    The \texttt{autoplay} option starts playback automatically when the slide
+    becomes visible.
+    \begin{center}
+        \includemovie[
+            poster=image.png,
             autoplay
         ]{0.7\linewidth}{0.4\linewidth}{video.mp4}
     \end{center}
-    
-    \vspace{0.5cm}
-    \textit{Note: The current conversion script will likely render this as a static placeholder or skip it, as PPTX video embedding requires special handling.}
+\end{frame}
+
+\begin{frame}{Autoplay + Repeat (loop)}
+    The \texttt{repeat} option causes the video to loop indefinitely.
+    Combined with \texttt{autoplay} it plays continuously while the slide is shown.
+    \begin{center}
+        \includemovie[
+            poster=image.png,
+            autoplay,
+            repeat
+        ]{0.7\linewidth}{0.4\linewidth}{video.mp4}
+    \end{center}
+\end{frame}
+
+\begin{frame}{Autoplay + Reduced Volume (30\%)}
+    The \texttt{volume} option (range 0.0--1.0) sets initial playback volume.
+    \begin{center}
+        \includemovie[
+            poster=image.png,
+            autoplay,
+            volume=0.3
+        ]{0.7\linewidth}{0.4\linewidth}{video.mp4}
+    \end{center}
 \end{frame}
 
 \end{document}

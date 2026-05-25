@@ -669,10 +669,10 @@ def parse_args() -> argparse.Namespace:
         description="Compile a Beamer .tex file to PDF and export slides as "
                     "vector SVG graphics inside a .pptx presentation."
     )
-    p.add_argument("tex_file", type=Path,
-                   help="Path to the Beamer .tex source file")
+    p.add_argument("input_file", type=Path,
+                   help="Path to the Beamer .tex source file or an existing .pdf file")
     p.add_argument("--output", "-o", type=Path, default=None,
-                   help="Output .pptx path (default: <tex_stem>.pptx alongside the source)")
+                   help="Output .pptx path (default: <input_stem>.pptx alongside the source)")
     p.add_argument("--latex-engine", "-e", default="pdflatex",
                    choices=["pdflatex", "xelatex", "lualatex"],
                    help="LaTeX engine to use (default: pdflatex)")
@@ -685,7 +685,7 @@ def parse_args() -> argparse.Namespace:
                         "The directory is created if it does not exist and is never "
                         "deleted automatically (implies --keep-build).")
     p.add_argument("--pdf", type=Path, default=None,
-                   help="Skip compilation and use this existing PDF directly")
+                   help="Skip compilation and use this specific PDF directly (legacy, use input_file with .pdf instead)")
     p.add_argument("--latex-cwd", type=Path, default=None,
                    metavar="DIR",
                    help="Working directory for LaTeX/biber/bibtex "
@@ -697,27 +697,36 @@ def parse_args() -> argparse.Namespace:
 
 def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
     """Core build logic, shared by the temp-dir and user-defined-dir paths."""
-    tex_path: Path = args.tex_file.resolve()
-    output_path: Path = args.output or tex_path.with_suffix(".pptx")
+    input_path: Path = args.input_file.resolve()
+    output_path: Path = args.output or input_path.with_suffix(".pptx")
     svg_dir = build_dir / "svgs"
-    latex_cwd = (args.latex_cwd or tex_path.parent).resolve()
+    latex_cwd = (args.latex_cwd or input_path.parent).resolve()
 
     # ── Compile or use existing PDF ───────────────────────────────────────────
     if args.pdf:
+        # Explicit --pdf takes precedence
         pdf_path = args.pdf.resolve()
         if not pdf_path.exists():
             sys.exit(f"[error] PDF not found: {pdf_path}")
         print(f"[1/3] Using existing PDF: {pdf_path}")
+    elif input_path.suffix.lower() == ".pdf":
+        # Input is already a PDF
+        pdf_path = input_path
+        print(f"[1/3] Using input PDF: {pdf_path}")
     else:
-        pdf_path = compile_latex(tex_path, args.latex_engine, build_dir, latex_cwd)
+        # Input is assumed to be LaTeX
+        pdf_path = compile_latex(input_path, args.latex_engine, build_dir, latex_cwd)
 
     # ── Extract SVGs ──────────────────────────────────────────────────────────
     svg_paths = extract_svgs(pdf_path, svg_dir)
 
     # ── Discover movie15 videos ──────────────────────────────────────────────
-    videos = _collect_videos(tex_path, pdf_path, latex_cwd)
-    if videos:
-        print(f"  Detected {len(videos)} video(s) to embed.")
+    # Only try to collect videos if we have a .tex file
+    videos = []
+    if input_path.suffix.lower() == ".tex":
+        videos = _collect_videos(input_path, pdf_path, latex_cwd)
+        if videos:
+            print(f"  Detected {len(videos)} video(s) to embed.")
 
     # ── Build PPTX ────────────────────────────────────────────────────────────
     build_pptx(svg_paths, output_path, videos=videos)
@@ -726,9 +735,9 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
 def main() -> None:
     args = parse_args()
 
-    tex_path: Path = args.tex_file.resolve()
-    if not tex_path.exists():
-        sys.exit(f"[error] File not found: {tex_path}")
+    input_path: Path = args.input_file.resolve()
+    if not input_path.exists():
+        sys.exit(f"[error] File not found: {input_path}")
 
     if args.build_dir:
         # User-defined build directory — create it and never auto-delete it.
@@ -743,7 +752,7 @@ def main() -> None:
             _run_build(args, build_dir)
 
             if args.keep_build:
-                kept = tex_path.parent / (tex_path.stem + "_build")
+                kept = input_path.parent / (input_path.stem + "_build")
                 shutil.copytree(tmp, str(kept), dirs_exist_ok=True)
                 print(f"  Build directory kept at: {kept}")
 

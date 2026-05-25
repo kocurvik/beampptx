@@ -370,7 +370,7 @@ _AUTOPLAY_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/p
                                 <p:childTnLst>
                                   <p:cmd type="call" cmd="playFrom(0.0)">
                                     <p:cBhvr>
-                                      <p:cTn id="6" dur="indefinite"{repeat_attr}/>
+                                      <p:cTn id="6" dur="indefinite"/>
                                       <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
                                     </p:cBhvr>
                                   </p:cmd>
@@ -394,7 +394,7 @@ _AUTOPLAY_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/p
           </p:seq>
           <p:video>
             <p:cMediaNode vol="{vol}">
-              <p:cTn id="7" fill="hold" display="0">
+              <p:cTn id="7" fill="hold" display="0"{repeat_attr}>
                 <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
               </p:cTn>
               <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>

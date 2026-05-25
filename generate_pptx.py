@@ -684,8 +684,6 @@ def parse_args() -> argparse.Namespace:
                    help="Use DIR as the build directory instead of a system temp dir. "
                         "The directory is created if it does not exist and is never "
                         "deleted automatically (implies --keep-build).")
-    p.add_argument("--pdf", type=Path, default=None,
-                   help="Skip compilation and use this specific PDF directly (legacy, use input_file with .pdf instead)")
     p.add_argument("--latex-cwd", type=Path, default=None,
                    metavar="DIR",
                    help="Working directory for LaTeX/biber/bibtex "
@@ -703,13 +701,7 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
     latex_cwd = (args.latex_cwd or input_path.parent).resolve()
 
     # ── Compile or use existing PDF ───────────────────────────────────────────
-    if args.pdf:
-        # Explicit --pdf takes precedence
-        pdf_path = args.pdf.resolve()
-        if not pdf_path.exists():
-            sys.exit(f"[error] PDF not found: {pdf_path}")
-        print(f"[1/3] Using existing PDF: {pdf_path}")
-    elif input_path.suffix.lower() == ".pdf":
+    if input_path.suffix.lower() == ".pdf":
         # Input is already a PDF
         pdf_path = input_path
         print(f"[1/3] Using input PDF: {pdf_path}")

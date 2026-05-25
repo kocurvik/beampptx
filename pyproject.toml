@@ -22,6 +22,10 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kocurvik/beampptx"
+Issues = "https://github.com/kocurvik/beampptx/issues"
+
 [project.scripts]
 beampptx = "generate_pptx:main"
 

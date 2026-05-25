@@ -62,6 +62,27 @@ beampptx presentation.tex --latex-engine xelatex
 beampptx presentation.tex --keep-build
 ```
 
+## Examples
+
+The repository includes a `test/` folder with several examples demonstrating different features. To try them out, clone the repository and run:
+
+```bash
+# Basic features (math, lists, etc.)
+beampptx test/example.tex
+
+# Overlays and transitions (\pause, \alt, etc.)
+beampptx test/example_transitions.tex
+
+# Image inclusion (PNG, JPEG, PDF)
+beampptx test/example_images.tex
+
+# Bibliography support (biblatex/biber)
+beampptx test/example_bib.tex
+
+# Video placeholder (using movie15)
+beampptx test/example_video.tex
+```
+
 ## Features in Detail
 
 ### Beamer Overlays

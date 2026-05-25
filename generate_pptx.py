@@ -3,7 +3,10 @@
 beamer_to_pptx.py
 
 Compiles a Beamer LaTeX file to PDF and converts each slide to a .pptx file,
-embedding every slide as a full-bleed EMF/SVG vector graphic.
+embedding every slide as a full-bleed EMF/SVG vector graphic.  Videos
+included via the ``movie15`` package's ``\\includemovie`` command are
+extracted from the source and inserted as native PowerPoint movie shapes
+on the slides where they appear.
 
 Usage:
     python beamer_to_pptx.py presentation.tex
@@ -19,6 +22,7 @@ Requirements:
 import argparse
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -181,6 +185,139 @@ def extract_svgs(pdf_path: Path, svg_dir: Path) -> list[Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Video discovery (movie15 package)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_MOVIE_RE = re.compile(
+    r'\\includemovie\s*'
+    r'(?:\[(?P<opts>[^\]]*)\])?\s*'
+    r'\{(?P<w>[^}]*)\}\s*'
+    r'\{(?P<h>[^}]*)\}\s*'
+    r'\{(?P<path>[^}]*)\}',
+    re.DOTALL,
+)
+
+
+def _parse_tex_videos(tex_path: Path) -> list[dict]:
+    """
+    Find every ``\\includemovie[opts]{w}{h}{path}`` in *tex_path* and return,
+    in source order, one dict per call with keys ``video_path`` (str),
+    ``poster_path`` (str | None), and ``autoplay`` (bool).
+    """
+    try:
+        text = tex_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = tex_path.read_text(encoding="latin-1")
+
+    videos = []
+    for m in _MOVIE_RE.finditer(text):
+        opts = m.group("opts") or ""
+        poster_match = re.search(r'poster\s*=\s*([^,\s\]]+)', opts)
+        videos.append({
+            "video_path": m.group("path").strip(),
+            "poster_path": (poster_match.group(1).strip()
+                            if poster_match else None),
+            "autoplay": bool(re.search(r'\bautoplay\b', opts)),
+        })
+    return videos
+
+
+def _find_video_annotations(pdf_path: Path) -> list[tuple[int, "fitz.Rect"]]:
+    """
+    Inspect the compiled PDF for Screen / Movie annotations that movie15
+    leaves behind.  Returns ``(page_index_0based, rect_in_pt)`` in PDF order.
+    """
+    doc = fitz.open(str(pdf_path))
+    results = []
+    try:
+        for page_idx in range(doc.page_count):
+            page = doc[page_idx]
+            annots = page.annots()
+            if annots is None:
+                continue
+            for annot in annots:
+                _, name = annot.type
+                if name in ("Screen", "Movie"):
+                    results.append((page_idx, annot.rect))
+    finally:
+        doc.close()
+    return results
+
+
+def _collect_videos(tex_path: Path, pdf_path: Path,
+                    source_dir: Path) -> dict[int, dict]:
+    """
+    Combine .tex parsing and PDF annotation analysis.  Returns a mapping
+    ``{page_index_0based: video_info}`` where ``video_info`` has resolved
+    absolute ``video_path`` / ``poster_path`` and a PyMuPDF ``rect_pt``
+    describing the on-page position in points.
+
+    If the number of ``\\includemovie`` calls in the source doesn't match the
+    number of Screen/Movie annotations in the PDF, we fall back to the
+    smaller count and pair them in document order (extra entries on either
+    side are dropped with a warning).
+    """
+    tex_videos = _parse_tex_videos(tex_path)
+    if not tex_videos:
+        return {}
+
+    annots = _find_video_annotations(pdf_path)
+    if not annots:
+        print("  [warn] \\includemovie found in source but no Screen/Movie "
+              "annotations in the PDF — videos cannot be positioned and "
+              "will be skipped.")
+        return {}
+
+    if len(annots) != len(tex_videos):
+        print(f"  [warn] {len(tex_videos)} \\includemovie call(s) in source "
+              f"but {len(annots)} video annotation(s) in PDF — pairing the "
+              f"first {min(len(annots), len(tex_videos))} in document order.")
+
+    result = {}
+    for video, (page_idx, rect) in zip(tex_videos, annots):
+        video_path = (source_dir / video["video_path"]).resolve()
+        poster_path = None
+        if video["poster_path"]:
+            poster_path = (source_dir / video["poster_path"]).resolve()
+        result[page_idx] = {
+            **video,
+            "video_path": video_path,
+            "poster_path": poster_path,
+            "rect_pt": rect,
+        }
+    return result
+
+
+def _add_video_to_slide(slide, info: dict) -> None:
+    """Insert a native PowerPoint movie shape at the PDF annotation's rect."""
+    video_path: Path = info["video_path"]
+    poster_path: Path | None = info["poster_path"]
+    rect = info["rect_pt"]
+
+    if not video_path.exists():
+        print(f"  [warn] video file not found, skipping: {video_path}")
+        return
+
+    # PyMuPDF Rect uses points with the origin at the top-left of the page;
+    # PowerPoint EMU uses the same origin convention.  1 pt = 12 700 EMU.
+    left = int(rect.x0 * 12700)
+    top = int(rect.y0 * 12700)
+    width = int(rect.width * 12700)
+    height = int(rect.height * 12700)
+
+    kwargs = {}
+    if poster_path and poster_path.exists():
+        kwargs["poster_frame_image"] = str(poster_path)
+
+    slide.shapes.add_movie(
+        str(video_path), left, top, width, height, **kwargs,
+    )
+    print(f"  → embedded video {video_path.name} on slide "
+          f"(at {rect.x0:.0f},{rect.y0:.0f} pt, "
+          f"{rect.width:.0f}×{rect.height:.0f} pt)")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Step 3 – Build .pptx
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -220,9 +357,18 @@ def _svg_dimensions(svg_path: Path) -> tuple[float, float]:
         return BEAMER_W_PT, BEAMER_H_PT
 
 
-def build_pptx(svg_paths: list[Path], output_path: Path) -> None:
-    """Create a .pptx where each slide contains one full-bleed SVG picture."""
+def build_pptx(svg_paths: list[Path], output_path: Path,
+               videos: dict[int, dict] | None = None) -> None:
+    """
+    Create a .pptx where each slide contains one full-bleed SVG picture.
+
+    If *videos* is supplied (mapping ``page_index_0based → video_info`` as
+    produced by :func:`_collect_videos`), a native PowerPoint movie shape is
+    added on top of the SVG on each affected slide.
+    """
     print("\n[3/3] Building PPTX …")
+
+    videos = videos or {}
 
     # Infer slide dimensions from the first SVG
     slide_w_pt, slide_h_pt = _svg_dimensions(svg_paths[0])
@@ -246,6 +392,11 @@ def build_pptx(svg_paths: list[Path], output_path: Path) -> None:
         # For maximum compatibility we also embed a PNG fallback.
         _insert_svg_picture(slide, svg_path,
                             prs.slide_width, prs.slide_height)
+
+        # Overlay any movie15 video on top of the SVG.
+        page_idx = idx - 1
+        if page_idx in videos:
+            _add_video_to_slide(slide, videos[page_idx])
 
         if idx % 10 == 0 or idx == len(svg_paths):
             print(f"  Processed {idx}/{len(svg_paths)} slides …")
@@ -422,8 +573,13 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
     # ── Extract SVGs ──────────────────────────────────────────────────────────
     svg_paths = extract_svgs(pdf_path, svg_dir)
 
+    # ── Discover movie15 videos ──────────────────────────────────────────────
+    videos = _collect_videos(tex_path, pdf_path, latex_cwd)
+    if videos:
+        print(f"  Detected {len(videos)} video(s) to embed.")
+
     # ── Build PPTX ────────────────────────────────────────────────────────────
-    build_pptx(svg_paths, output_path)
+    build_pptx(svg_paths, output_path, videos=videos)
 
 
 def main() -> None:

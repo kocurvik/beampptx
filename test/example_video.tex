@@ -1,0 +1,33 @@
+\documentclass{beamer}
+\beamertemplatenavigationsymbolsempty
+
+% movie15 is an older package for video inclusion.
+% It is generally superseded by media9, but still used in some workflows.
+\usepackage{movie15}
+
+\title{Beamer with Video (movie15)}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Video Inclusion (movie15)}
+    This slide is intended to test video inclusion using the \texttt{movie15} package.
+    
+    \begin{center}
+        \includemovie[
+            poster=image.png,
+            text={Click to play},
+            autoplay
+        ]{0.7\linewidth}{0.4\linewidth}{video.mp4}
+    \end{center}
+    
+    \vspace{0.5cm}
+    \textit{Note: The current conversion script will likely render this as a static placeholder or skip it, as PPTX video embedding requires special handling.}
+\end{frame}
+
+\end{document}

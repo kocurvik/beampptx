@@ -667,7 +667,8 @@ def _insert_svg_picture(slide, svg_path: Path, cx_emu: int, cy_emu: int) -> None
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Compile a Beamer .tex file to PDF and export slides as "
-                    "vector SVG graphics inside a .pptx presentation."
+                    "vector SVG graphics inside a .pptx presentation. "
+                    "A compiled .pdf file can also be used directly."
     )
     p.add_argument("input_file", type=Path,
                    help="Path to the Beamer .tex source file or an existing .pdf file")

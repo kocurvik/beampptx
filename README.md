@@ -4,7 +4,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/kocurvik/beampptx)](https://github.com/kocurvik/beampptx/stargazers)
 [![Python Version](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
 
-Convert LaTeX Beamer slides to PowerPoint presentations with **flawless vector graphics** and **embedded video support**.
+Convert LaTeX Beamer slides to PowerPoint presentations with **flawless vector graphics** and **embedded video support**. Mostly vibe-coded using claude-cli and gemini-cli.
 
 ## Why beampptx?
 

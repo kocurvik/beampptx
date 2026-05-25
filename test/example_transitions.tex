@@ -1,0 +1,46 @@
+\documentclass{beamer}
+\beamertemplatenavigationsymbolsempty
+
+\title{Beamer Transitions and Overlays}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Step-by-step List}
+    This list reveals items one by one using \texttt{\textbackslash pause}:
+    \begin{itemize}
+        \item Item 1 \pause
+        \item Item 2 \pause
+        \item Item 3
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Overlays with Specifications}
+    Using \texttt{<1->}, \texttt{<2->}, etc.:
+    \begin{itemize}
+        \item<1-> Always visible from slide 1.
+        \item<2-> Visible from slide 2 onwards.
+        \item<3> Only visible on slide 3.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Using \textbackslash alt and \textbackslash onslide}
+    \onslide<1->{This text is always here (occupies space).}
+    
+    \onslide<2->{
+        \alt<2>{
+            \textbf{This is shown on slide 2.}
+        }{
+            \textit{This is shown on slide 3.}
+        }
+    }
+
+    \onslide<3>{Final slide content.}
+\end{frame}
+
+\end{document}

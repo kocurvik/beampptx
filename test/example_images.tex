@@ -1,0 +1,37 @@
+\documentclass{beamer}
+\beamertemplatenavigationsymbolsempty
+\usepackage{graphicx}
+
+\title{Beamer with Images}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Raster Images: JPEG and PNG}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \centering
+            JPEG (Red Square)\\
+            \includegraphics[width=0.8\textwidth]{image.jpg}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            PNG (Blue Square)\\
+            \includegraphics[width=0.8\textwidth]{image.png}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Vector/PDF Image}
+    \centering
+    This is an included PDF document as an image:\\
+    \vspace{0.5cm}
+    \includegraphics[width=0.4\textwidth]{image_src.pdf}
+\end{frame}
+
+\end{document}

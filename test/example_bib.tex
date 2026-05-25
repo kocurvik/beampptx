@@ -1,0 +1,29 @@
+\documentclass{beamer}
+\beamertemplatenavigationsymbolsempty
+
+\usepackage[style=authoryear,backend=biber]{biblatex}
+\addbibresource{references.bib}
+
+\title{Beamer with Bibliography}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Citations}
+    In this slide, we cite some fundamental works:
+    \begin{itemize}
+        \item A classic paper: \textcite{knuth1984}.
+        \item A fundamental book: \parencite{lamport1994}.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[allowframebreaks]{References}
+    \printbibliography
+\end{frame}
+
+\end{document}

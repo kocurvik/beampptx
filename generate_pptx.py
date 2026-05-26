@@ -120,16 +120,19 @@ def _process_bibliography(build_dir: Path, stem: str, latex_cwd: Path) -> None:
       \\bibdata in .aux → traditional bibtex / natbib
       neither        → no bibliography, nothing to do
 
-    Both tools run with cwd=*latex_cwd* (so relative .bib paths resolve the
-    same way they did for LaTeX) and receive an absolute path to the
-    .aux/.bcf file inside *build_dir*.  ``BIBINPUTS``/``BSTINPUTS`` are
-    extended to also search *build_dir* so that biblatex's auto-generated
-    ``<stem>-blx.bib`` (written next to the .aux) is picked up.  The trailing
-    empty path element preserves the default TeX search locations.
+    Both tools are invoked with cwd=*build_dir* (where the .aux/.bcf live)
+    and just the stem name as their target.  Running in *build_dir* is
+    required for bibtex — TeX Live's default ``openout_any = p`` (paranoid)
+    refuses to write .blg/.bbl to absolute paths outside the working
+    directory.  ``BIBINPUTS``/``BSTINPUTS`` are extended to also search
+    *latex_cwd* so the user's .bib files (referenced from the source by
+    relative path) are still found, plus *build_dir* itself so that
+    biblatex's auto-generated ``<stem>-blx.bib`` (next to the .aux) is
+    picked up.  The trailing empty path element preserves the default TeX
+    search locations.
     """
     bcf_path = build_dir / f"{stem}.bcf"
     aux_path = build_dir / f"{stem}.aux"
-    target = str(build_dir / stem)
 
     search = os.pathsep.join([str(build_dir), str(latex_cwd), ""])
     env = {**os.environ, "BIBINPUTS": search, "BSTINPUTS": search}
@@ -137,13 +140,13 @@ def _process_bibliography(build_dir: Path, stem: str, latex_cwd: Path) -> None:
     if bcf_path.exists():
         biber_bin = require("biber")
         print("\n[1/3] Processing bibliography (biber) …")
-        run([biber_bin, target], cwd=latex_cwd, env=env)
+        run([biber_bin, stem], cwd=build_dir, env=env)
         return
 
     if aux_path.exists() and "\\bibdata" in aux_path.read_text(errors="ignore"):
         bibtex_bin = require("bibtex")
         print("\n[1/3] Processing bibliography (bibtex) …")
-        run([bibtex_bin, target], cwd=latex_cwd, env=env)
+        run([bibtex_bin, stem], cwd=build_dir, env=env)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

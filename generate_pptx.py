@@ -216,6 +216,34 @@ _INCLUDEGRAPHICS_RE = re.compile(
 )
 
 
+def _strip_tex_comments(text: str) -> str:
+    """
+    Blank out LaTeX ``%`` line-comments while preserving character offsets.
+    A literal ``\\%`` is escaped and is not a comment.  The comment span is
+    replaced with spaces (the trailing newline is kept) so positions used
+    downstream for ordering remain valid.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '\\' and i + 1 < n:
+            out.append(ch)
+            out.append(text[i + 1])
+            i += 2
+            continue
+        if ch == '%':
+            j = text.find('\n', i)
+            if j == -1:
+                j = n
+            out.append(' ' * (j - i))
+            i = j
+            continue
+        out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
 def _parse_balanced_braces(text: str, start: int) -> tuple[str, int] | None:
     """
     *start* must index a ``{``.  Return the substring inside the matching
@@ -286,8 +314,12 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
     except UnicodeDecodeError:
         text = tex_path.read_text(encoding="latin-1")
 
-    # Simple comment stripping (naive but handles % on its own line or after cmd)
-    # We only strip for scanning purposes to find [ and { correctly.
+    # Drop ``%``-to-end-of-line comments before scanning so video commands
+    # inside commented-out frames don't get picked up.  Replace the comment
+    # span with spaces (keeping the newline) so source offsets — used for
+    # ordering and for pairing against PDF annotations — stay aligned.
+    text = _strip_tex_comments(text)
+
     def skip_noise(t: str, p: int) -> int:
         while p < len(t):
             if t[p].isspace():

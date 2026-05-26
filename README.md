@@ -11,7 +11,7 @@ Convert LaTeX Beamer slides to PowerPoint presentations with **flawless vector g
 Converting Beamer slides to PowerPoint often results in blurry images or lost functionality. `beampptx` solves this by:
 - **Vector Fidelity**: Every slide is embedded as a full-bleed SVG vector graphic, ensuring perfect sharpness at any zoom level.
 - **Dynamic Overlays**: Supports Beamer transitions (`\pause`, `\alt`, `<1->`, etc.) by expanding them into individual static slides.
-- **Native Video**: Automatically extracts videos included via the `movie15` package and embeds them as native PowerPoint video shapes with support for autoplay and looping.
+- **Native Video**: Automatically extracts videos included via the `movie15` package's `\includemovie` or the `multimedia` package's `\movie` command and embeds them as native PowerPoint video shapes with support for autoplay, looping, and volume.
 - **Bibliography Support**: Handles complex LaTeX compilation passes (including `biber` and `bibtex`).
 
 ## Installation
@@ -79,8 +79,11 @@ beampptx test/example_images.tex
 # Bibliography support (biblatex/biber)
 beampptx test/example_bib.tex
 
-# Video placeholder (using movie15)
+# Video with the movie15 package (\includemovie)
 beampptx test/example_video.tex
+
+# Video with the multimedia package (\movie)
+beampptx test/example_movie.tex
 ```
 
 ## Features in Detail
@@ -89,13 +92,39 @@ beampptx test/example_video.tex
 `beampptx` detects frames with multiple slides (e.g., from `\pause` or `<1->`) and creates a separate PowerPoint slide for each state. This preserves the feeling of "animations" when clicking through the presentation.
 
 ### Videos
-Use the `movie15` package to include videos in your Beamer source:
+Two LaTeX packages are supported for video inclusion — pick whichever your
+source already uses.  In both cases `beampptx` finds the call in your `.tex`
+source, locates the corresponding annotation in the compiled PDF, and
+embeds the video file directly into the `.pptx` as a native PowerPoint
+movie shape.
+
+**`movie15` — `\includemovie`:**
+
 ```latex
 \usepackage{movie15}
 ...
-\includemovie[autoplay, poster=image.png]{width}{height}{video.mp4}
+\includemovie[autoplay, poster=image.png, repeat, volume=0.5]
+              {width}{height}{video.mp4}
 ```
-`beampptx` will find these in your `.tex` source and embed `video.mp4` directly into the `.pptx` file.
+
+**`multimedia` — `\movie` (ships with Beamer):**
+
+```latex
+\usepackage{multimedia}
+...
+\movie[width=8cm, height=4.5cm, autostart, loop]
+      {\includegraphics[width=8cm]{poster.png}}
+      {video.mp4}
+```
+
+Recognised options (spelling differs slightly between the two packages):
+
+| Behaviour          | `movie15`               | `multimedia`          |
+| ------------------ | ----------------------- | --------------------- |
+| Auto-play          | `autoplay`              | `autostart`           |
+| Loop               | `repeat` / `palindrome` | `loop` / `palindrome` |
+| Initial volume     | `volume=0.0..1.0`       | *(not supported by the package)* |
+| Poster image       | `poster=file`           | first arg (`\includegraphics{file}`) |
 
 ## License
 

@@ -188,10 +188,12 @@ def extract_svgs(pdf_path: Path, svg_dir: Path) -> list[Path]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Video discovery (movie15 package)
+# Video discovery — supports both the ``movie15`` package's ``\includemovie``
+# and the ``multimedia`` package's ``\movie`` command.
 # ──────────────────────────────────────────────────────────────────────────────
 
-_MOVIE_RE = re.compile(
+# movie15: \includemovie[opts]{width}{height}{path}
+_INCLUDEMOVIE_RE = re.compile(
     r'\\includemovie\s*'
     r'(?:\[(?P<opts>[^\]]*)\])?\s*'
     r'\{(?P<w>[^}]*)\}\s*'
@@ -200,43 +202,136 @@ _MOVIE_RE = re.compile(
     re.DOTALL,
 )
 
+# multimedia: \movie[opts]{poster}{path}
+# Cannot use a single regex because the poster argument is often
+# ``\includegraphics{…}`` — i.e. it contains balanced braces.  We just locate
+# the command and parse the arguments separately with a brace-aware scanner.
+_MOVIE_CMD_RE = re.compile(r'\\movie\b')
+
+# Looks for ``\includegraphics[opts]{file}`` inside the poster argument so
+# we can hand the same image to PowerPoint as the video's poster frame.
+_INCLUDEGRAPHICS_RE = re.compile(
+    r'\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}'
+)
+
+
+def _parse_balanced_braces(text: str, start: int) -> tuple[str, int] | None:
+    """
+    *start* must index a ``{``.  Return the substring inside the matching
+    pair and the index just past the closing ``}``, or ``None`` on mismatch.
+    Honours TeX-style backslash escapes so that ``\\{`` / ``\\}`` don't
+    perturb the depth counter.
+    """
+    if start >= len(text) or text[start] != '{':
+        return None
+    depth = 1
+    i = start + 1
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and i + 1 < len(text):
+            i += 2  # skip the escaped character
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i], i + 1
+        i += 1
+    return None
+
+
+def _video_options(opts: str) -> dict:
+    """
+    Translate the comma-separated option string from ``\\includemovie`` /
+    ``\\movie`` into the keys we care about: ``autoplay``, ``loop``,
+    ``volume``, ``poster_path``.
+
+    Option spellings handled:
+      autoplay (movie15)      → autoplay
+      autostart (multimedia)  → autoplay
+      repeat[=N] (movie15)    → loop
+      loop      (multimedia)  → loop
+      palindrome (both)       → loop
+      volume=N  (movie15)     → volume (0.0–1.0)
+      poster=FILE (movie15)   → poster_path
+    """
+    poster_match = re.search(r'\bposter\s*=\s*([^,\s\]]+)', opts)
+    volume_match = re.search(r'\bvolume\s*=\s*([0-9.]+)', opts)
+    return {
+        "poster_path": (poster_match.group(1).strip()
+                        if poster_match else None),
+        "autoplay": bool(re.search(r'\b(?:autoplay|autostart)\b', opts)),
+        "loop": bool(re.search(r'\b(?:repeat|loop)\b(?:\s*=\s*\d+)?', opts)
+                     or re.search(r'\bpalindrome\b', opts)),
+        "volume": (float(volume_match.group(1))
+                   if volume_match else None),
+    }
+
 
 def _parse_tex_videos(tex_path: Path) -> list[dict]:
     """
-    Find every ``\\includemovie[opts]{w}{h}{path}`` in *tex_path* and return,
-    in source order, one dict per call with keys:
+    Find every video inclusion in *tex_path* and return one dict per call,
+    in source order, with keys:
 
-      * ``video_path``  (str)
-      * ``poster_path`` (str | None)
-      * ``autoplay``    (bool)   — starts playback when the slide is shown
-      * ``loop``        (bool)   — translated from movie15's ``repeat``
-      * ``volume``      (float | None) — movie15 uses 0.0–1.0
+      * ``video_path``  (str) — raw path as written in the source
+      * ``poster_path`` (str | None) — poster image if one was specified
+      * ``autoplay``    (bool)
+      * ``loop``        (bool)
+      * ``volume``      (float | None) — 0.0–1.0
     """
     try:
         text = tex_path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         text = tex_path.read_text(encoding="latin-1")
 
-    videos = []
-    for m in _MOVIE_RE.finditer(text):
-        opts = m.group("opts") or ""
-        poster_match = re.search(r'poster\s*=\s*([^,\s\]]+)', opts)
-        volume_match = re.search(r'\bvolume\s*=\s*([0-9.]+)', opts)
-        # ``repeat`` may appear as a bare flag or as ``repeat=N`` — any value
-        # ≥ 1 maps to "loop indefinitely" in PowerPoint, which only supports
-        # the binary loop/no-loop distinction.
-        repeat_match = re.search(r'\brepeat\b(?:\s*=\s*\d+)?', opts)
-        palindrome_match = re.search(r'\bpalindrome\b', opts)
-        videos.append({
-            "video_path": m.group("path").strip(),
-            "poster_path": (poster_match.group(1).strip()
-                            if poster_match else None),
-            "autoplay": bool(re.search(r'\bautoplay\b', opts)),
-            "loop": bool(repeat_match or palindrome_match),
-            "volume": (float(volume_match.group(1))
-                       if volume_match else None),
-        })
-    return videos
+    found = []  # list of (source_pos, info_dict)
+
+    # ── movie15 ──────────────────────────────────────────────────────────────
+    for m in _INCLUDEMOVIE_RE.finditer(text):
+        info = _video_options(m.group("opts") or "")
+        info["video_path"] = m.group("path").strip()
+        found.append((m.start(), info))
+
+    # ── multimedia (\movie) ──────────────────────────────────────────────────
+    for m in _MOVIE_CMD_RE.finditer(text):
+        pos = m.end()
+        # Optional [opts]
+        opts = ""
+        if pos < len(text) and text[pos] == '[':
+            close = text.find(']', pos)
+            if close == -1:
+                continue
+            opts = text[pos + 1:close]
+            pos = close + 1
+        # Skip whitespace between [opts] and {poster}
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        first = _parse_balanced_braces(text, pos)
+        if first is None:
+            continue
+        poster_arg, pos = first
+        # Skip whitespace between {poster} and {path}
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        second = _parse_balanced_braces(text, pos)
+        if second is None:
+            continue
+        path_arg, _ = second
+
+        info = _video_options(opts)
+        info["video_path"] = path_arg.strip()
+        # If the poster argument uses \includegraphics, treat that image as
+        # the poster.  Otherwise (plain text, \hyperlink, etc.) leave it as
+        # whatever the explicit poster= option said, which may be None.
+        if info["poster_path"] is None:
+            ig = _INCLUDEGRAPHICS_RE.search(poster_arg)
+            if ig:
+                info["poster_path"] = ig.group(1).strip()
+        found.append((m.start(), info))
+
+    found.sort(key=lambda x: x[0])
+    return [info for _, info in found]
 
 
 def _find_video_annotations(pdf_path: Path) -> list[tuple[int, "fitz.Rect"]]:
@@ -269,10 +364,10 @@ def _collect_videos(tex_path: Path, pdf_path: Path,
     absolute ``video_path`` / ``poster_path`` and a PyMuPDF ``rect_pt``
     describing the on-page position in points.
 
-    If the number of ``\\includemovie`` calls in the source doesn't match the
-    number of Screen/Movie annotations in the PDF, we fall back to the
-    smaller count and pair them in document order (extra entries on either
-    side are dropped with a warning).
+    If the number of ``\\includemovie`` / ``\\movie`` calls in the source
+    doesn't match the number of Screen/Movie annotations in the PDF, we
+    fall back to the smaller count and pair them in document order (extra
+    entries on either side are dropped with a warning).
     """
     tex_videos = _parse_tex_videos(tex_path)
     if not tex_videos:
@@ -280,13 +375,13 @@ def _collect_videos(tex_path: Path, pdf_path: Path,
 
     annots = _find_video_annotations(pdf_path)
     if not annots:
-        print("  [warn] \\includemovie found in source but no Screen/Movie "
+        print("  [warn] video commands found in source but no Screen/Movie "
               "annotations in the PDF — videos cannot be positioned and "
               "will be skipped.")
         return {}
 
     if len(annots) != len(tex_videos):
-        print(f"  [warn] {len(tex_videos)} \\includemovie call(s) in source "
+        print(f"  [warn] {len(tex_videos)} video command(s) in source "
               f"but {len(annots)} video annotation(s) in PDF — pairing the "
               f"first {min(len(annots), len(tex_videos))} in document order.")
 

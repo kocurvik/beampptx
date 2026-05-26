@@ -134,7 +134,7 @@ Recognised options:
 | Initial volume     | `volume=0.0..1.0`       | *(not supported by the package)* |
 | Poster image       | `poster=file`           | first arg (`\includegraphics{file}`) |
 
-Note that currently pdf imports for posters do not work. Likewise the autoplay option requires activating the "next" slide for the videos to run.
+Note that currently, using pdfs for poster images is not supported. Likewise, the autoplay option requires activating the "next" slide for the videos to run.
 
 ## License
 

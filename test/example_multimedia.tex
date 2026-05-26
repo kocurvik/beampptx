@@ -1,0 +1,28 @@
+\documentclass[aspectratio=169]{beamer}
+\beamertemplatenavigationsymbolsempty
+\usepackage{multimedia}
+
+\title{Beamer with multimedia Package}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Video with multimedia}
+    This slide tests the \texttt{\textbackslash movie} command from the \texttt{multimedia} package.
+    
+
+    \movie[width=0.3\linewidth, height=0.2\linewidth, poster, autostart, loop]{
+        \includegraphics[width=0.3\linewidth, height=0.2\linewidth]{image.png}
+    }{video.mp4}
+    \hfill
+    \movie[width=0.3\linewidth, height=0.2\linewidth, poster, autostart, loop]{
+            \includegraphics[width=0.3\linewidth, height=0.2\linewidth]{image.png}
+        }{video2.mp4}
+\end{frame}
+
+\end{document}

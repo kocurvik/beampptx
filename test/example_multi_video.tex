@@ -1,0 +1,35 @@
+\documentclass[aspectratio=169]{beamer}
+\beamertemplatenavigationsymbolsempty
+\usepackage{movie15}
+
+\title{Beamer with Multiple Videos}
+\author{Author Name}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Two Videos on One Slide}
+    This slide tests the inclusion of two separate videos side-by-side.
+    
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \centering
+            Video 1\\
+            \includemovie[poster=image.png, autoplay]{0.8\linewidth}{0.45\linewidth}{video.mp4}
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \centering
+            Video 2\\
+            \includemovie[poster=image.png]{0.8\linewidth}{0.45\linewidth}{video2.mp4}
+        \end{column}
+    \end{columns}
+    
+    \vspace{0.5cm}
+    \textit{Note: The current script should extract both and place them at their respective positions in the resulting PPTX.}
+\end{frame}
+
+\end{document}

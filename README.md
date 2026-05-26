@@ -49,6 +49,8 @@ If you already have a compiled PDF:
 ```bash
 beampptx presentation.pdf
 ```
+Note that for this option, the videos will not be embedded correctly, but the rest of the content should be exported as vector graphics.
+
 
 ### Advanced Options
 ```bash

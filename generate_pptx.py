@@ -4,9 +4,9 @@ beamer_to_pptx.py
 
 Compiles a Beamer LaTeX file to PDF and converts each slide to a .pptx file,
 embedding every slide as a full-bleed EMF/SVG vector graphic.  Videos
-included via the ``movie15`` package's ``\\includemovie`` command are
-extracted from the source and inserted as native PowerPoint movie shapes
-on the slides where they appear.
+included via the ``movie15`` package's ``\\includemovie`` command or the
+``multimedia`` package's ``\\movie`` command are extracted from the source
+and inserted as native PowerPoint movie shapes on the slides where they appear.
 
 Usage:
     python beamer_to_pptx.py presentation.tex
@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -285,12 +286,27 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
     except UnicodeDecodeError:
         text = tex_path.read_text(encoding="latin-1")
 
+    # Simple comment stripping (naive but handles % on its own line or after cmd)
+    # We only strip for scanning purposes to find [ and { correctly.
+    def skip_noise(t: str, p: int) -> int:
+        while p < len(t):
+            if t[p].isspace():
+                p += 1
+            elif t[p] == '%':
+                nl = t.find('\n', p)
+                if nl == -1: return len(t)
+                p = nl + 1
+            else:
+                break
+        return p
+
     found = []  # list of (source_pos, info_dict)
 
     # ── movie15 ──────────────────────────────────────────────────────────────
     for m in _INCLUDEMOVIE_RE.finditer(text):
         info = _video_options(m.group("opts") or "")
         info["video_path"] = m.group("path").strip()
+        print(f"  [debug] matched movie15: {info['video_path']}")
         found.append((m.start(), info))
 
     # ── multimedia (\movie) ──────────────────────────────────────────────────
@@ -298,29 +314,38 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
         pos = m.end()
         # Optional [opts]
         opts = ""
+        pos = skip_noise(text, pos)
         if pos < len(text) and text[pos] == '[':
             close = text.find(']', pos)
             if close == -1:
+                print(f"  [debug] \movie at {m.start()} has unclosed [")
                 continue
             opts = text[pos + 1:close]
             pos = close + 1
-        # Skip whitespace between [opts] and {poster}
-        while pos < len(text) and text[pos].isspace():
-            pos += 1
+        
+        pos = skip_noise(text, pos)
+        if pos >= len(text) or text[pos] != '{':
+            print(f"  [debug] \movie at {m.start()} missing poster arg at {pos}: {text[pos:pos+10]!r}")
+            continue
         first = _parse_balanced_braces(text, pos)
         if first is None:
+            print(f"  [debug] \movie at {m.start()} failed to parse poster arg braces")
             continue
         poster_arg, pos = first
-        # Skip whitespace between {poster} and {path}
-        while pos < len(text) and text[pos].isspace():
-            pos += 1
+        
+        pos = skip_noise(text, pos)
+        if pos >= len(text) or text[pos] != '{':
+            print(f"  [debug] \movie at {m.start()} missing path arg at {pos}: {text[pos:pos+10]!r}")
+            continue
         second = _parse_balanced_braces(text, pos)
         if second is None:
+            print(f"  [debug] \movie at {m.start()} failed to parse path arg braces")
             continue
         path_arg, _ = second
 
         info = _video_options(opts)
         info["video_path"] = path_arg.strip()
+        print(f"  [debug] matched multimedia at {m.start()}: {info['video_path']}")
         # If the poster argument uses \includegraphics, treat that image as
         # the poster.  Otherwise (plain text, \hyperlink, etc.) leave it as
         # whatever the explicit poster= option said, which may be None.
@@ -336,8 +361,7 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
 
 def _find_video_annotations(pdf_path: Path) -> list[tuple[int, "fitz.Rect"]]:
     """
-    Inspect the compiled PDF for Screen / Movie annotations that movie15
-    leaves behind.  Returns ``(page_index_0based, rect_in_pt)`` in PDF order.
+    Inspect the compiled PDF for Screen / Movie annotations.
     """
     doc = fitz.open(str(pdf_path))
     results = []
@@ -349,6 +373,8 @@ def _find_video_annotations(pdf_path: Path) -> list[tuple[int, "fitz.Rect"]]:
                 continue
             for annot in annots:
                 _, name = annot.type
+                print(f"  [debug] page {page_idx} annot type: {name}")
+                # multimedia sometimes uses Screen, sometimes Movie
                 if name in ("Screen", "Movie"):
                     results.append((page_idx, annot.rect))
     finally:
@@ -357,12 +383,12 @@ def _find_video_annotations(pdf_path: Path) -> list[tuple[int, "fitz.Rect"]]:
 
 
 def _collect_videos(tex_path: Path, pdf_path: Path,
-                    source_dir: Path) -> dict[int, dict]:
+                    source_dir: Path) -> dict[int, list[dict]]:
     """
     Combine .tex parsing and PDF annotation analysis.  Returns a mapping
-    ``{page_index_0based: video_info}`` where ``video_info`` has resolved
-    absolute ``video_path`` / ``poster_path`` and a PyMuPDF ``rect_pt``
-    describing the on-page position in points.
+    ``{page_index_0based: [video_info, ...]}`` where ``video_info`` has resolved
+    absolute ``video_path`` / ``poster_path`` and a PyMuPDF
+    ``rect_pt`` describing the on-page position in points.
 
     If the number of ``\\includemovie`` / ``\\movie`` calls in the source
     doesn't match the number of Screen/Movie annotations in the PDF, we
@@ -385,18 +411,18 @@ def _collect_videos(tex_path: Path, pdf_path: Path,
               f"but {len(annots)} video annotation(s) in PDF — pairing the "
               f"first {min(len(annots), len(tex_videos))} in document order.")
 
-    result = {}
+    result = defaultdict(list)
     for video, (page_idx, rect) in zip(tex_videos, annots):
         video_path = (source_dir / video["video_path"]).resolve()
         poster_path = None
         if video["poster_path"]:
             poster_path = (source_dir / video["poster_path"]).resolve()
-        result[page_idx] = {
+        result[page_idx].append({
             **video,
             "video_path": video_path,
             "poster_path": poster_path,
             "rect_pt": rect,
-        }
+        })
     return result
 
 
@@ -597,13 +623,12 @@ def _svg_dimensions(svg_path: Path) -> tuple[float, float]:
 
 
 def build_pptx(svg_paths: list[Path], output_path: Path,
-               videos: dict[int, dict] | None = None) -> None:
+               videos: dict[int, list[dict]] | None = None) -> None:
     """
     Create a .pptx where each slide contains one full-bleed SVG picture.
 
-    If *videos* is supplied (mapping ``page_index_0based → video_info`` as
-    produced by :func:`_collect_videos`), a native PowerPoint movie shape is
-    added on top of the SVG on each affected slide.
+    If *videos* is supplied (mapping ``page_index_0based → [video_info, ...]``),
+    native PowerPoint movie shapes are added on top of the SVG.
     """
     print("\n[3/3] Building PPTX …")
 
@@ -632,10 +657,11 @@ def build_pptx(svg_paths: list[Path], output_path: Path,
         _insert_svg_picture(slide, svg_path,
                             prs.slide_width, prs.slide_height)
 
-        # Overlay any movie15 video on top of the SVG.
+        # Overlay any videos on top of the SVG.
         page_idx = idx - 1
         if page_idx in videos:
-            _add_video_to_slide(slide, videos[page_idx])
+            for video_info in videos[page_idx]:
+                _add_video_to_slide(slide, video_info)
 
         if idx % 10 == 0 or idx == len(svg_paths):
             print(f"  Processed {idx}/{len(svg_paths)} slides …")
@@ -813,11 +839,12 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
 
     # ── Discover movie15 videos ──────────────────────────────────────────────
     # Only try to collect videos if we have a .tex file
-    videos = []
+    videos = {}
     if input_path.suffix.lower() == ".tex":
         videos = _collect_videos(input_path, pdf_path, latex_cwd)
-        if videos:
-            print(f"  Detected {len(videos)} video(s) to embed.")
+        total_videos = sum(len(vlist) for vlist in videos.values())
+        if total_videos:
+            print(f"  Detected {total_videos} video(s) to embed.")
 
     # ── Build PPTX ────────────────────────────────────────────────────────────
     build_pptx(svg_paths, output_path, videos=videos)

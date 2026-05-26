@@ -84,6 +84,9 @@ beampptx test/example_bib.tex
 # Video with the movie15 package (\includemovie)
 beampptx test/example_video.tex
 
+# Multiple videos on a single slide
+beampptx test/example_multi_video.tex
+
 # Video with the multimedia package (\movie)
 beampptx test/example_movie.tex
 ```

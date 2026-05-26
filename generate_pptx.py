@@ -426,15 +426,22 @@ def _collect_videos(tex_path: Path, pdf_path: Path,
     return result
 
 
-def _add_video_to_slide(slide, info: dict) -> None:
-    """Insert a native PowerPoint movie shape at the PDF annotation's rect."""
+def _add_video_to_slide(slide, info: dict) -> dict | None:
+    """
+    Insert a native PowerPoint movie shape at the PDF annotation's rect.
+    Returns a playback spec (``{shape, autoplay, loop, volume}``) for the
+    caller to feed into :func:`_apply_videos_playback`, or ``None`` if the
+    video file was missing.  Timing wiring is deferred so that all videos
+    on a slide can be collected into a single ``<p:timing>`` element —
+    applying it per-video would overwrite earlier videos' timing.
+    """
     video_path: Path = info["video_path"]
     poster_path: Path | None = info["poster_path"]
     rect = info["rect_pt"]
 
     if not video_path.exists():
         print(f"  [warn] video file not found, skipping: {video_path}")
-        return
+        return None
 
     # PyMuPDF Rect uses points with the origin at the top-left of the page;
     # PowerPoint EMU uses the same origin convention.  1 pt = 12 700 EMU.
@@ -454,9 +461,6 @@ def _add_video_to_slide(slide, info: dict) -> None:
     autoplay = info.get("autoplay", False)
     loop = info.get("loop", False)
     volume = info.get("volume")  # 0.0..1.0 or None
-    if autoplay or loop or volume is not None:
-        _apply_video_playback(slide, shape,
-                              autoplay=autoplay, loop=loop, volume=volume)
 
     extras = []
     if autoplay: extras.append("autoplay")
@@ -467,40 +471,95 @@ def _add_video_to_slide(slide, info: dict) -> None:
           f"(at {rect.x0:.0f},{rect.y0:.0f} pt, "
           f"{rect.width:.0f}×{rect.height:.0f} pt){extras_str}")
 
+    return {
+        "shape": shape,
+        "autoplay": autoplay,
+        "loop": loop,
+        "volume": volume,
+    }
 
-# Full <p:timing> tree that triggers ``playFrom(0.0)`` on the named shape as
-# soon as the slide is shown.  The ``presetClass="mediacall"`` afterEffect is
-# the structure PowerPoint itself emits for autoplay videos.  ``{shape_id}``,
-# ``{vol}`` and ``{repeat_attr}`` are substituted by Python's ``str.format``.
-_AUTOPLAY_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <p:tnLst>
-    <p:par>
-      <p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">
-        <p:childTnLst>
-          <p:seq concurrent="1" nextAc="seek">
-            <p:cTn id="2" dur="indefinite" nodeType="mainSeq">
-              <p:childTnLst>
-                <p:par>
-                  <p:cTn id="3" fill="hold">
-                    <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
-                    <p:childTnLst>
-                      <p:par>
-                        <p:cTn id="4" fill="hold">
-                          <p:stCondLst><p:cond delay="0"/></p:stCondLst>
-                          <p:childTnLst>
+
+def _build_video_timing_xml(specs: list[dict]) -> str:
+    """
+    Compose a single ``<p:timing>`` tree that wires every entry in *specs*
+    for autoplay / looping / custom volume.  Each spec is
+    ``{shape, autoplay, loop, volume}``.
+
+    Multiple ``<p:par>`` children inside the inner ``mainSeq`` step run in
+    parallel, so several autoplay videos on the same slide all start at
+    once (mirroring what PowerPoint itself emits for multi-media slides).
+    Every ``<p:cTn id=…>`` in the tree must be unique, so IDs are allocated
+    sequentially as the tree is built.
+    """
+    any_autoplay = any(s["autoplay"] for s in specs)
+
+    next_id = 0
+    def alloc() -> int:
+        nonlocal next_id
+        next_id += 1
+        return next_id
+
+    def vol_attr(s: dict) -> int:
+        # OOXML ``vol`` is on the 0..100000 (= 100 %) scale;
+        # PowerPoint's default for unspecified volume is 80 %.
+        v = int((s["volume"] if s["volume"] is not None else 0.8) * 100000)
+        return max(0, min(100000, v))
+
+    if any_autoplay:
+        # Reserve the four scaffolding IDs that wrap the autoplay mediacalls.
+        root_id, seq_id, step_id, fire_id = alloc(), alloc(), alloc(), alloc()
+
+        mediacall_blocks = []
+        for s in specs:
+            if not s["autoplay"]:
+                continue
+            mc_id = alloc()
+            bhvr_id = alloc()
+            mediacall_blocks.append(f"""
                             <p:par>
-                              <p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect">
+                              <p:cTn id="{mc_id}" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect">
                                 <p:stCondLst><p:cond delay="0"/></p:stCondLst>
                                 <p:childTnLst>
                                   <p:cmd type="call" cmd="playFrom(0.0)">
                                     <p:cBhvr>
-                                      <p:cTn id="6" dur="indefinite"/>
-                                      <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
+                                      <p:cTn id="{bhvr_id}" dur="indefinite"/>
+                                      <p:tgtEl><p:spTgt spid="{s['shape'].shape_id}"/></p:tgtEl>
                                     </p:cBhvr>
                                   </p:cmd>
                                 </p:childTnLst>
                               </p:cTn>
-                            </p:par>
+                            </p:par>""")
+
+        video_blocks = []
+        for s in specs:
+            media_id = alloc()
+            repeat_attr = ' repeatCount="indefinite"' if s["loop"] else ''
+            video_blocks.append(f"""
+          <p:video>
+            <p:cMediaNode vol="{vol_attr(s)}">
+              <p:cTn id="{media_id}" fill="hold" display="0"{repeat_attr}>
+                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+              </p:cTn>
+              <p:tgtEl><p:spTgt spid="{s['shape'].shape_id}"/></p:tgtEl>
+            </p:cMediaNode>
+          </p:video>""")
+
+        return f"""<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:tnLst>
+    <p:par>
+      <p:cTn id="{root_id}" dur="indefinite" restart="never" nodeType="tmRoot">
+        <p:childTnLst>
+          <p:seq concurrent="1" nextAc="seek">
+            <p:cTn id="{seq_id}" dur="indefinite" nodeType="mainSeq">
+              <p:childTnLst>
+                <p:par>
+                  <p:cTn id="{step_id}" fill="hold">
+                    <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+                    <p:childTnLst>
+                      <p:par>
+                        <p:cTn id="{fire_id}" fill="hold">
+                          <p:stCondLst><p:cond delay="0"/></p:stCondLst>
+                          <p:childTnLst>{''.join(mediacall_blocks)}
                           </p:childTnLst>
                         </p:cTn>
                       </p:par>
@@ -515,38 +574,34 @@ _AUTOPLAY_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/p
             <p:nextCondLst>
               <p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond>
             </p:nextCondLst>
-          </p:seq>
-          <p:video>
-            <p:cMediaNode vol="{vol}">
-              <p:cTn id="7" fill="hold" display="0"{repeat_attr}>
-                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
-              </p:cTn>
-              <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
-            </p:cMediaNode>
-          </p:video>
+          </p:seq>{''.join(video_blocks)}
         </p:childTnLst>
       </p:cTn>
     </p:par>
   </p:tnLst>
 </p:timing>"""
 
+    # Click-to-play variant — no mediacall scaffold, just one <p:video> per shape.
+    root_id = alloc()
+    video_blocks = []
+    for s in specs:
+        media_id = alloc()
+        repeat_attr = ' repeatCount="indefinite"' if s["loop"] else ''
+        video_blocks.append(f"""
+          <p:video>
+            <p:cMediaNode vol="{vol_attr(s)}">
+              <p:cTn id="{media_id}" fill="hold" display="0"{repeat_attr}>
+                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
+              </p:cTn>
+              <p:tgtEl><p:spTgt spid="{s['shape'].shape_id}"/></p:tgtEl>
+            </p:cMediaNode>
+          </p:video>""")
 
-# Click-to-play timing — same shape as what python-pptx emits by default but
-# with the ``vol`` attribute and an optional ``repeatCount`` so we can honour
-# ``volume=`` / ``repeat`` even when the user did not request autoplay.
-_CLICK_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+    return f"""<p:timing xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:tnLst>
     <p:par>
-      <p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot">
-        <p:childTnLst>
-          <p:video>
-            <p:cMediaNode vol="{vol}">
-              <p:cTn id="2" fill="hold" display="0"{repeat_attr}>
-                <p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>
-              </p:cTn>
-              <p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl>
-            </p:cMediaNode>
-          </p:video>
+      <p:cTn id="{root_id}" dur="indefinite" restart="never" nodeType="tmRoot">
+        <p:childTnLst>{''.join(video_blocks)}
         </p:childTnLst>
       </p:cTn>
     </p:par>
@@ -554,24 +609,19 @@ _CLICK_TIMING_XML = """<p:timing xmlns:p="http://schemas.openxmlformats.org/pres
 </p:timing>"""
 
 
-def _apply_video_playback(slide, shape, *,
-                          autoplay: bool, loop: bool,
-                          volume: float | None) -> None:
+def _apply_videos_playback(slide, specs: list[dict]) -> None:
     """
-    Replace the slide's <p:timing> with a tree that wires *shape* for
-    autoplay, looping, and/or custom volume.  python-pptx's ``add_movie``
-    always leaves a click-to-play <p:timing> behind, so we just swap it.
+    Replace the slide's ``<p:timing>`` with one that wires every video in
+    *specs* for its requested autoplay / loop / volume.  Skips slides where
+    every video would use the default click-to-play timing python-pptx
+    already emits.
     """
-    shape_id = shape.shape_id
-    # OOXML ``vol`` is on the 0..100000 (= 100 %) scale; the PowerPoint
-    # default for unspecified volume is 80 %.
-    vol = int((volume if volume is not None else 0.8) * 100000)
-    vol = max(0, min(100000, vol))
-    repeat_attr = ' repeatCount="indefinite"' if loop else ''
+    relevant = [s for s in specs
+                if s["autoplay"] or s["loop"] or s["volume"] is not None]
+    if not relevant:
+        return
 
-    template = _AUTOPLAY_TIMING_XML if autoplay else _CLICK_TIMING_XML
-    timing_xml = template.format(shape_id=shape_id, vol=vol,
-                                 repeat_attr=repeat_attr)
+    timing_xml = _build_video_timing_xml(relevant)
     new_timing = etree.fromstring(timing_xml)
 
     P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
@@ -657,11 +707,19 @@ def build_pptx(svg_paths: list[Path], output_path: Path,
         _insert_svg_picture(slide, svg_path,
                             prs.slide_width, prs.slide_height)
 
-        # Overlay any videos on top of the SVG.
+        # Overlay any videos on top of the SVG.  Timing wiring is applied
+        # once for the whole slide so multiple autoplay videos don't clobber
+        # each other (each shape needs its own <p:par>/<p:video> entry inside
+        # a single <p:timing> tree — appending per-video would overwrite).
         page_idx = idx - 1
         if page_idx in videos:
+            specs = []
             for video_info in videos[page_idx]:
-                _add_video_to_slide(slide, video_info)
+                spec = _add_video_to_slide(slide, video_info)
+                if spec is not None:
+                    specs.append(spec)
+            if specs:
+                _apply_videos_playback(slide, specs)
 
         if idx % 10 == 0 or idx == len(svg_paths):
             print(f"  Processed {idx}/{len(svg_paths)} slides …")

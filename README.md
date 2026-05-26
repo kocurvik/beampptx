@@ -89,6 +89,9 @@ beampptx test/example_multi_video.tex
 
 # Video with the multimedia package (\movie)
 beampptx test/example_movie.tex
+
+# Multiple videos on the same slide with the multimedia package (\movie)
+beampptx test/example_multimedia.tex
 ```
 
 ## Features in Detail
@@ -122,7 +125,7 @@ movie shape.
       {video.mp4}
 ```
 
-Recognised options (spelling differs slightly between the two packages):
+Recognised options:
 
 | Behaviour          | `movie15`               | `multimedia`          |
 | ------------------ | ----------------------- | --------------------- |
@@ -130,6 +133,8 @@ Recognised options (spelling differs slightly between the two packages):
 | Loop               | `repeat` / `palindrome` | `loop` / `palindrome` |
 | Initial volume     | `volume=0.0..1.0`       | *(not supported by the package)* |
 | Poster image       | `poster=file`           | first arg (`\includegraphics{file}`) |
+
+Note that currently pdf imports for posters do not work. Likewise the autoplay option requires activating the "next" slide for the videos to run.
 
 ## License
 

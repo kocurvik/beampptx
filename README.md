@@ -134,7 +134,7 @@ Recognised options:
 | Initial volume     | `volume=0.0..1.0`       | *(not supported by the package)* |
 | Poster image       | `poster=file`           | first arg (`\includegraphics{file}`) |
 
-Note that currently, using pdfs for poster images is not supported. Likewise, the autoplay option requires activating the "next" slide for the videos to run.
+Note that currently, using pdfs for poster images is not supported. Likewise, the autoplay option requires activating the "next" slide for the videos to run. The palindrome option will just loop the video normally instead of reversing it for even playtroughs.
 
 ## License
 

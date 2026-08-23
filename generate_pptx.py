@@ -34,6 +34,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import lxml.etree as etree
 from pptx import Presentation
+from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE as MSO_SHAPE
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
 try:
@@ -186,6 +187,40 @@ def extract_svgs(pdf_path: Path, svg_dir: Path) -> list[Path]:
         "Install it with:\n"
         "  pip install pymupdf"
     )
+
+
+def collect_internal_links(pdf_path: Path) -> dict[int, list[dict]]:
+    """Return PDF link rectangles that point to another page in *pdf_path*.
+
+    Beamer writes ``\\hyperlink`` and ``\\beamergotobutton`` destinations as
+    PDF link annotations.  Reading those annotations is more reliable than
+    parsing TeX: it also covers links introduced by Beamer themes and keeps
+    the exact clickable rectangle that was typeset on every overlay.
+
+    The returned mapping uses zero-based PDF page indices.  Links without a
+    valid destination page (for example external URLs) are intentionally left
+    alone; PowerPoint's internal slide navigation is only meaningful for the
+    page destinations handled here.
+    """
+    links_by_page: dict[int, list[dict]] = defaultdict(list)
+    doc = fitz.open(str(pdf_path))
+    try:
+        for page_idx, page in enumerate(doc):
+            for link in page.get_links():
+                target_page = link.get("page")
+                rect = link.get("from")
+                if not isinstance(target_page, int) or not (0 <= target_page < len(doc)):
+                    continue
+                if rect is None or rect.is_empty or rect.is_infinite:
+                    continue
+                links_by_page[page_idx].append({
+                    "target_page": target_page,
+                    "rect": (rect.x0, rect.y0, rect.x1, rect.y1),
+                    "page_size": (page.rect.width, page.rect.height),
+                })
+    finally:
+        doc.close()
+    return dict(links_by_page)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -704,8 +739,52 @@ def _svg_dimensions(svg_path: Path) -> tuple[float, float]:
         return BEAMER_W_PT, BEAMER_H_PT
 
 
+def _add_internal_link_shape(slide, target_slide, link: dict,
+                             slide_width: int, slide_height: int) -> bool:
+    """Add an invisible, clickable shape matching a PDF link rectangle."""
+    x0, y0, x1, y1 = link["rect"]
+    page_width, page_height = link["page_size"]
+    if page_width <= 0 or page_height <= 0:
+        return False
+
+    # PDF and PowerPoint use a top-left origin for these coordinates. Scale
+    # to account for the small rounding differences between PDF and SVG sizes.
+    left = max(0, min(slide_width, round(x0 / page_width * slide_width)))
+    top = max(0, min(slide_height, round(y0 / page_height * slide_height)))
+    right = max(0, min(slide_width, round(x1 / page_width * slide_width)))
+    bottom = max(0, min(slide_height, round(y1 / page_height * slide_height)))
+    if right <= left or bottom <= top:
+        return False
+
+    shape = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, left, top, right - left, bottom - top
+    )
+    shape.name = "Beamer internal link"
+
+    # No-fill shapes are not consistently clickable in slideshow mode. A
+    # 0.001%-opaque fill is visually imperceptible but remains hit-testable.
+    sp_pr = shape._element.spPr
+    a_ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    for tag in ("noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"):
+        element = sp_pr.find(a_ns + tag)
+        if element is not None:
+            sp_pr.remove(element)
+    solid_fill = etree.SubElement(sp_pr, a_ns + "solidFill")
+    color = etree.SubElement(solid_fill, a_ns + "srgbClr", val="FFFFFF")
+    etree.SubElement(color, a_ns + "alpha", val="1")
+    line = sp_pr.find(a_ns + "ln")
+    if line is not None:
+        sp_pr.remove(line)
+    new_line = etree.SubElement(sp_pr, a_ns + "ln", w="0")
+    etree.SubElement(new_line, a_ns + "noFill")
+
+    shape.click_action.target_slide = target_slide
+    return True
+
+
 def build_pptx(svg_paths: list[Path], output_path: Path,
-               videos: dict[int, list[dict]] | None = None) -> None:
+               videos: dict[int, list[dict]] | None = None,
+               internal_links: dict[int, list[dict]] | None = None) -> None:
     """
     Create a .pptx where each slide contains one full-bleed SVG picture.
 
@@ -715,6 +794,7 @@ def build_pptx(svg_paths: list[Path], output_path: Path,
     print("\n[3/3] Building PPTX …")
 
     videos = videos or {}
+    internal_links = internal_links or {}
 
     # Infer slide dimensions from the first SVG
     slide_w_pt, slide_h_pt = _svg_dimensions(svg_paths[0])
@@ -729,8 +809,10 @@ def build_pptx(svg_paths: list[Path], output_path: Path,
     # Use a completely blank layout (no placeholders)
     blank_layout = prs.slide_layouts[6]
 
+    slides = []
     for idx, svg_path in enumerate(svg_paths, start=1):
         slide = prs.slides.add_slide(blank_layout)
+        slides.append(slide)
 
         # python-pptx does not natively support SVG insertion into the
         # slide XML, so we add it via direct XML manipulation (Office 2016+
@@ -755,6 +837,20 @@ def build_pptx(svg_paths: list[Path], output_path: Path,
 
         if idx % 10 == 0 or idx == len(svg_paths):
             print(f"  Processed {idx}/{len(svg_paths)} slides …")
+
+    link_count = 0
+    for page_idx, links in internal_links.items():
+        if not (0 <= page_idx < len(slides)):
+            continue
+        for link in links:
+            target_page = link["target_page"]
+            if 0 <= target_page < len(slides):
+                link_count += _add_internal_link_shape(
+                    slides[page_idx], slides[target_page], link,
+                    prs.slide_width, prs.slide_height,
+                )
+    if link_count:
+        print(f"  Added {link_count} internal navigation link(s).")
 
     prs.save(str(output_path))
     print(f"\n✓ Saved: {output_path}")
@@ -927,6 +1023,13 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
     # ── Extract SVGs ──────────────────────────────────────────────────────────
     svg_paths = extract_svgs(pdf_path, svg_dir)
 
+    # Preserve Beamer's internal navigation (for example \hyperlink paired
+    # with \beamergotobutton) as PowerPoint slide click actions.
+    internal_links = collect_internal_links(pdf_path)
+    total_links = sum(len(link_list) for link_list in internal_links.values())
+    if total_links:
+        print(f"  Detected {total_links} internal navigation link(s).")
+
     # ── Discover movie15 videos ──────────────────────────────────────────────
     # Only try to collect videos if we have a .tex file
     videos = {}
@@ -937,7 +1040,8 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
             print(f"  Detected {total_videos} video(s) to embed.")
 
     # ── Build PPTX ────────────────────────────────────────────────────────────
-    build_pptx(svg_paths, output_path, videos=videos)
+    build_pptx(svg_paths, output_path, videos=videos,
+               internal_links=internal_links)
 
 
 def main() -> None:

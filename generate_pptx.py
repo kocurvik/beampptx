@@ -995,6 +995,11 @@ def parse_args() -> argparse.Namespace:
                    help="Use DIR as the build directory instead of a system temp dir. "
                         "The directory is created if it does not exist and is never "
                         "deleted automatically (implies --keep-build).")
+    p.add_argument("--no-links", action="store_true",
+                   help="Do not convert Beamer's internal navigation into "
+                        "PowerPoint click actions. Useful with themes that draw "
+                        "a navigation bar, as those emit a link rectangle per "
+                        "entry on every slide.")
     p.add_argument("--latex-cwd", type=Path, default=None,
                    metavar="DIR",
                    help="Working directory for LaTeX/biber/bibtex "
@@ -1025,10 +1030,12 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
 
     # Preserve Beamer's internal navigation (for example \hyperlink paired
     # with \beamergotobutton) as PowerPoint slide click actions.
-    internal_links = collect_internal_links(pdf_path)
-    total_links = sum(len(link_list) for link_list in internal_links.values())
-    if total_links:
-        print(f"  Detected {total_links} internal navigation link(s).")
+    internal_links = {}
+    if not args.no_links:
+        internal_links = collect_internal_links(pdf_path)
+        total_links = sum(len(link_list) for link_list in internal_links.values())
+        if total_links:
+            print(f"  Detected {total_links} internal navigation link(s).")
 
     # ── Discover movie15 videos ──────────────────────────────────────────────
     # Only try to collect videos if we have a .tex file

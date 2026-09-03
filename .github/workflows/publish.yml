@@ -1,0 +1,143 @@
+name: Build and publish
+
+# One workflow for both dry runs and real releases.
+#
+#   * Pull requests touching packaging files: build, check and smoke-test only.
+#   * Manual run (Actions -> Run workflow): the same, plus an optional TestPyPI
+#     upload that exercises the full Trusted Publishing handshake.
+#   * A published GitHub Release: the only path that uploads to real PyPI.
+#
+# Authentication uses PyPI Trusted Publishing (OIDC) — no API token is stored in
+# the repository. This requires a one-time setup on PyPI:
+#
+#   PyPI -> your project -> Publishing -> Add a new pending publisher
+#     Owner:            kocurvik
+#     Repository name:  beampptx
+#     Workflow name:    publish.yml
+#     Environment name: pypi
+#
+# For the optional TestPyPI upload, repeat the same on https://test.pypi.org
+# with Environment name: testpypi. The environment names below must match the
+# ones configured there. Leave upload_to_testpypi = false until it exists.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      upload_to_testpypi:
+        description: "Also upload the built distributions to TestPyPI"
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "beampptx/**"
+      - ".github/workflows/publish.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine
+
+      - name: Verify the package version matches the release tag
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(python -c "import tomllib, pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")"
+          echo "Release tag: $tag"
+          echo "Package version: $version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Release tag '$tag' does not match the version '$version' in pyproject.toml"
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check package metadata
+        run: python -m twine check dist/*
+
+      - name: Smoke-test the built wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --quiet dist/*.whl
+          /tmp/smoke/bin/beampptx --version
+          /tmp/smoke/bin/python -c "import beampptx; print(beampptx.__version__)"
+
+      - name: Summarise what this run will publish
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            destination="PyPI (release ${GITHUB_REF_NAME})"
+          elif [ "${{ inputs.upload_to_testpypi }}" = "true" ]; then
+            destination="TestPyPI"
+          else
+            destination="nothing — dry run, build artifacts only"
+          fi
+          {
+            echo "### Distributions built"
+            echo ""
+            echo '```'
+            ls -1 dist/
+            echo '```'
+            echo ""
+            echo "**Publishing to:** ${destination}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    # The only job that touches real PyPI, and only a published Release reaches it.
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/beampptx
+    permissions:
+      id-token: write  # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.upload_to_testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/beampptx
+    permissions:
+      id-token: write  # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

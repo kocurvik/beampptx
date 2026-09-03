@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/kocurvik/beampptx)](https://github.com/kocurvik/beampptx/stargazers)
-[![Python Version](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/beampptx)](https://pypi.org/project/beampptx/)
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 Convert LaTeX Beamer slides to PowerPoint presentations with **flawless vector graphics** and **embedded video support**. Mostly vibe-coded using claude-cli and gemini-cli.
 
@@ -17,8 +18,14 @@ Converting Beamer slides to PowerPoint often results in blurry images or lost fu
 
 ## Installation
 
-### From GitHub (Recommended)
-You can install `beampptx` directly from the repository without cloning:
+### From PyPI (Recommended)
+
+```bash
+pip install beampptx
+```
+
+### From GitHub
+To install the latest development state directly from the repository:
 
 ```bash
 pip install git+https://github.com/kocurvik/beampptx.git
@@ -28,11 +35,11 @@ pip install git+https://github.com/kocurvik/beampptx.git
 If you have the repository cloned:
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 ### System Requirements
-- **Python**: 3.6+
+- **Python**: 3.10+
 - **LaTeX**: A working distribution (MiKTeX, TeX Live) with `pdflatex` (default), `xelatex`, or `lualatex`.
 - **Tools**: `biber` or `bibtex` if using bibliographies.
 
@@ -66,7 +73,24 @@ beampptx presentation.tex --keep-build
 
 # Skip internal navigation links
 beampptx presentation.tex --no-links
+
+# Build in a specific directory instead of a temp dir (never auto-deleted)
+beampptx presentation.tex --build-dir ./build
+
+# Run LaTeX from a different working directory than the .tex file
+beampptx presentation.tex --latex-cwd ./src
+
+# Show the installed version
+beampptx --version
 ```
+
+`--build-dir` implies `--keep-build`: the directory is created if missing and is
+never removed automatically, which makes it the easiest way to inspect the
+intermediate PDF and SVGs after a failed run. `--latex-cwd` controls how relative
+`\input`, `\includegraphics`, and `\bibliography` paths in the source resolve —
+it defaults to the directory containing the `.tex` file.
+
+`beampptx` can also be run as a module: `python -m beampptx presentation.tex`.
 
 ## Examples
 
@@ -84,6 +108,9 @@ beampptx test/example_images.tex
 
 # Bibliography support (biblatex/biber)
 beampptx test/example_bib.tex
+
+# Internal navigation links (\hyperlink + \beamergotobutton) with video
+beampptx test/example_links.tex
 
 # Video with the movie15 package (\includemovie)
 beampptx test/example_video.tex
@@ -147,6 +174,26 @@ Recognised options:
 | Poster image       | `poster=file`           | first arg (`\includegraphics{file}`) |
 
 Note that currently, using pdfs for poster images is not supported. Likewise, the autoplay option requires activating the "next" slide for the videos to run. The palindrome option will just loop the video normally instead of reversing it for even playtroughs.
+
+## Release Notes
+
+### 1.1.0
+
+- **Available on PyPI**: `beampptx` can now be installed with `pip install beampptx`
+  instead of only from GitHub.
+- **Proper package layout**: the code moved from a top-level `generate_pptx.py`
+  module into a `beampptx` package. The `beampptx` command is unchanged, the
+  converter can now also be run as `python -m beampptx`, and installing no longer
+  places a generic `generate_pptx` module on your import path.
+- **Preserved internal Beamer navigation**: internal PDF destinations become
+  PowerPoint click actions, contributed by
+  [@mefilippin](https://github.com/mefilippin) in
+  [#1](https://github.com/kocurvik/beampptx/pull/1). Added `--no-links` to skip
+  the conversion for themes that draw a navigation bar.
+- **Requires Python 3.10+**: this was always true of the code; the metadata
+  previously claimed 3.6+.
+- Added `--version`, and fixed console output crashing on Windows when redirected
+  to a file or pipe.
 
 ## License
 

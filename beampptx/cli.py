@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""
-beamer_to_pptx.py
+r"""
+beampptx.cli
 
 Compiles a Beamer LaTeX file to PDF and converts each slide to a .pptx file,
 embedding every slide as a full-bleed EMF/SVG vector graphic.  Videos
-included via the ``movie15`` package's ``\\includemovie`` command or the
-``multimedia`` package's ``\\movie`` command are extracted from the source
+included via the ``movie15`` package's ``\includemovie`` command or the
+``multimedia`` package's ``\movie`` command are extracted from the source
 and inserted as native PowerPoint movie shapes on the slides where they appear.
 
 Usage:
-    python beamer_to_pptx.py presentation.tex
-    python beamer_to_pptx.py presentation.tex --output out.pptx
-    python beamer_to_pptx.py presentation.tex --latex-engine xelatex
+    beampptx presentation.tex
+    beampptx presentation.tex --output out.pptx
+    beampptx presentation.tex --latex-engine xelatex
 
 Requirements:
-    pip install python-pptx pymupdf
+    pip install beampptx
     System: pdflatex (or xelatex/lualatex).
             biber and/or bibtex if the document has a bibliography.
 """
@@ -31,11 +31,16 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
-import fitz  # PyMuPDF
+try:
+    import pymupdf as fitz  # PyMuPDF >= 1.24.3
+except ImportError:  # pragma: no cover - older PyMuPDF only ships `fitz`
+    import fitz
 import lxml.etree as etree
 from pptx import Presentation
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE as MSO_SHAPE
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+
+from . import __version__
 
 try:
     from pptx.opc.part import Part as _Part  # pptx < 1.0
@@ -385,28 +390,28 @@ def _parse_tex_videos(tex_path: Path) -> list[dict]:
         if pos < len(text) and text[pos] == '[':
             close = text.find(']', pos)
             if close == -1:
-                print(f"  [debug] \movie at {m.start()} has unclosed [")
+                print(rf"  [debug] \movie at {m.start()} has unclosed [")
                 continue
             opts = text[pos + 1:close]
             pos = close + 1
         
         pos = skip_noise(text, pos)
         if pos >= len(text) or text[pos] != '{':
-            print(f"  [debug] \movie at {m.start()} missing poster arg at {pos}: {text[pos:pos+10]!r}")
+            print(rf"  [debug] \movie at {m.start()} missing poster arg at {pos}: {text[pos:pos+10]!r}")
             continue
         first = _parse_balanced_braces(text, pos)
         if first is None:
-            print(f"  [debug] \movie at {m.start()} failed to parse poster arg braces")
+            print(rf"  [debug] \movie at {m.start()} failed to parse poster arg braces")
             continue
         poster_arg, pos = first
         
         pos = skip_noise(text, pos)
         if pos >= len(text) or text[pos] != '{':
-            print(f"  [debug] \movie at {m.start()} missing path arg at {pos}: {text[pos:pos+10]!r}")
+            print(rf"  [debug] \movie at {m.start()} missing path arg at {pos}: {text[pos:pos+10]!r}")
             continue
         second = _parse_balanced_braces(text, pos)
         if second is None:
-            print(f"  [debug] \movie at {m.start()} failed to parse path arg braces")
+            print(rf"  [debug] \movie at {m.start()} failed to parse path arg braces")
             continue
         path_arg, _ = second
 
@@ -978,8 +983,11 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Compile a Beamer .tex file to PDF and export slides as "
                     "vector SVG graphics inside a .pptx presentation. "
-                    "A compiled .pdf file can also be used directly."
+                    "A compiled .pdf file can also be used directly.",
+        prog="beampptx",
     )
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__}")
     p.add_argument("input_file", type=Path,
                    help="Path to the Beamer .tex source file or an existing .pdf file")
     p.add_argument("--output", "-o", type=Path, default=None,
@@ -1051,7 +1059,22 @@ def _run_build(args: argparse.Namespace, build_dir: Path) -> None:
                internal_links=internal_links)
 
 
+def _configure_stdio() -> None:
+    """Never let progress output crash on a legacy-codepage stdout.
+
+    Console output contains a few non-ASCII glyphs. Windows uses UTF-8 for a
+    real console, but falls back to the ANSI codepage (cp1252) when output is
+    piped or redirected, where '→' and '✓' raise UnicodeEncodeError.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main() -> None:
+    _configure_stdio()
     args = parse_args()
 
     input_path: Path = args.input_file.resolve()

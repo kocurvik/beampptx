@@ -1,33 +1,47 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "beampptx"
-version = "0.1.0"
+version = "1.1.0"
 description = "Convert LaTeX Beamer slides to PowerPoint with vector graphics and video support."
 authors = [
   { name="Viktor Kocur", email="kocurvik@gmail.com" },
 ]
 readme = "README.md"
-requires-python = ">=3.6"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+keywords = ["beamer", "latex", "powerpoint", "pptx", "presentation", "converter", "svg"]
 dependencies = [
-    "python-pptx",
-    "pymupdf",
-    "lxml",
+    "python-pptx>=0.6.21",
+    "pymupdf>=1.23",
+    "lxml>=4.6",
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Presentation",
+    "Topic :: Text Processing :: Markup :: LaTeX",
+    "Topic :: Utilities",
 ]
 
 [project.urls]
 Homepage = "https://github.com/kocurvik/beampptx"
+Repository = "https://github.com/kocurvik/beampptx"
 Issues = "https://github.com/kocurvik/beampptx/issues"
 
 [project.scripts]
-beampptx = "generate_pptx:main"
+beampptx = "beampptx.cli:main"
 
-[tool.setuptools]
-py-modules = ["generate_pptx"]
+[tool.setuptools.packages.find]
+include = ["beampptx*"]
